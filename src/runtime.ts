@@ -56,8 +56,7 @@ export function createResumableStreamContextFactory(defaults: _Private.RedisDefa
       },
       createNewResumableStream: async (
         streamId: string,
-        makeStream: () => ReadableStream<string>,
-        skipCharacters?: number
+        makeStream: () => ReadableStream<string>
       ): Promise<ReadableStream<string> | null> => {
         const initPromise = Promise.all(initPromises);
         await initPromise;
@@ -85,6 +84,7 @@ export function createResumableStreamContextFactory(defaults: _Private.RedisDefa
         );
       },
       hasExistingStream: async (streamId: string): Promise<null | true | "DONE"> => {
+        await Promise.all(initPromises);
         const state = await ctx.publisher.get(`${ctx.keyPrefix}:sentinel:${streamId}`);
         if (state === null) {
           return null;
@@ -181,6 +181,10 @@ async function createNewResumableStream(
     async (message: string) => {
       const parsedMessage = JSON.parse(message) as ResumeStreamMessage;
       debugLog("Connected to listener", parsedMessage.listenerId);
+      // Note: listener IDs accumulate here even after the consumer disconnects.
+      // This is intentional — removing them would add complexity to the hot path,
+      // and publishing to a dead channel is harmless (no subscribers = no-op).
+      // The array is cleared in performCleanup when the producer stream ends.
       listenerChannels.push(parsedMessage.listenerId);
       debugLog("parsedMessage", chunks.length, parsedMessage.skipCharacters);
       const chunksToSend = chunks.join("").slice(parsedMessage.skipCharacters || 0);
@@ -290,15 +294,25 @@ export async function resumeStream(
   skipCharacters?: number
 ): Promise<ReadableStream<string> | null> {
   const listenerId = crypto.randomUUID();
+  let cleanedUp = false;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  const cleanup = async () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+      timeoutId = undefined;
+    }
+    await ctx.subscriber.unsubscribe(`${ctx.keyPrefix}:chunk:${listenerId}`).catch(() => {});
+  };
+
   return new Promise<ReadableStream<string> | null>((resolve, reject) => {
     const readableStream = new ReadableStream<string>({
       async start(controller) {
         try {
           debugLog("STARTING STREAM", streamId, listenerId);
-          const cleanup = async () => {
-            await ctx.subscriber.unsubscribe(`${ctx.keyPrefix}:chunk:${listenerId}`);
-          };
-          const timeout = setTimeout(async () => {
+          timeoutId = setTimeout(async () => {
             await cleanup();
             const val = await ctx.publisher.get(`${ctx.keyPrefix}:sentinel:${streamId}`);
             if (val === DONE_VALUE) {
@@ -317,7 +331,10 @@ export async function resumeStream(
             async (message: string) => {
               debugLog("Received message", message);
               // The other side always sends a message even if it is the empty string.
-              clearTimeout(timeout);
+              if (timeoutId !== undefined) {
+                clearTimeout(timeoutId);
+                timeoutId = undefined;
+              }
               resolve(readableStream);
               if (message === DONE_MESSAGE) {
                 try {
@@ -356,6 +373,9 @@ export async function resumeStream(
         } catch (e) {
           reject(e);
         }
+      },
+      cancel() {
+        return cleanup();
       },
     });
   });

@@ -16,12 +16,13 @@ const ctx1 = createResumableStreamContext({
   }),
 });
 
-const redis = new Redis("redis://localhost:6379");
+const redisSub = new Redis("redis://localhost:6379");
+const redisPub = new Redis("redis://localhost:6379");
 
 const ctx2 = createResumableStreamContext({
   waitUntil: waitUntil,
-  subscriber: redis,
-  publisher: redis,
+  subscriber: redisSub,
+  publisher: redisPub,
 });
 
 export async function POST(

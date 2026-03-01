@@ -59,13 +59,11 @@ export interface ResumableStreamContext {
    *
    * @param streamId - The ID of the stream. Must be unique for each stream.
    * @param makeStream - A function that returns a stream of strings. It's only executed if the stream it not yet in progress.
-   * @param skipCharacters - Number of characters to skip
    * @returns A readable stream of strings. Returns null if there was a stream with the given streamId but it is already fully done (Defaults to 24 hour expiration)
    */
   createNewResumableStream: (
     streamId: string,
-    makeStream: () => ReadableStream<string>,
-    skipCharacters?: number
+    makeStream: () => ReadableStream<string>
   ) => Promise<ReadableStream<string> | null>;
 
   /**

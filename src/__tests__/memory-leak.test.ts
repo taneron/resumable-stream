@@ -354,3 +354,103 @@ describe("memory leak: error, cancel, and timeout paths", () => {
     expect(retained).toBeLessThan(total * 0.5);
   }, 30_000);
 });
+
+describe("resumeStream cleanup", () => {
+  it("cancelling a resumed stream triggers unsubscribe", async () => {
+    const { subscriber, publisher } = createInMemoryPubSubForTesting();
+    const unsubscribeSpy = vi.spyOn(subscriber, "unsubscribe");
+
+    const waitUntilPromises: Promise<unknown>[] = [];
+    const resume = createResumableStreamContext({
+      waitUntil: (p) => { waitUntilPromises.push(p); },
+      subscriber, publisher,
+      keyPrefix: "test-resume-cancel-" + crypto.randomUUID(),
+    });
+
+    // Create a producer stream that stays open
+    const { readable, writer } = createTestingStream();
+    const producerStream = await resume.createNewResumableStream("rc-stream", () => readable);
+
+    // Write some data so the producer is active
+    writer.write("hello ");
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Resume the stream (consumer side)
+    const consumerStream = await resume.resumeExistingStream("rc-stream");
+    expect(consumerStream).not.toBeNull();
+    expect(consumerStream).not.toBeUndefined();
+
+    // Read the initial catch-up data
+    const reader = consumerStream!.getReader();
+    const { value } = await reader.read();
+    expect(value).toBe("hello ");
+    reader.releaseLock();
+
+    // Cancel the consumer stream (simulates client disconnect)
+    await consumerStream!.cancel();
+
+    // Verify unsubscribe was called for the chunk channel
+    const chunkUnsubscribes = unsubscribeSpy.mock.calls.filter(
+      ([channel]) => typeof channel === "string" && channel.includes(":chunk:")
+    );
+    expect(chunkUnsubscribes.length).toBeGreaterThanOrEqual(1);
+
+    // Clean up: close the producer
+    writer.close();
+    await streamToBuffer(producerStream);
+    await Promise.all(waitUntilPromises);
+  }, 10_000);
+
+  it("hasExistingStream works immediately after construction", async () => {
+    const { subscriber, publisher } = createInMemoryPubSubForTesting();
+    const resume = createResumableStreamContext({
+      waitUntil: () => {},
+      subscriber, publisher,
+      keyPrefix: "test-has-existing-" + crypto.randomUUID(),
+    });
+
+    // Call hasExistingStream immediately — should not throw even if
+    // initPromises haven't resolved yet
+    const result = await resume.hasExistingStream("nonexistent");
+    expect(result).toBeNull();
+  }, 5_000);
+
+  it("unsubscribe is called on chunk channel when resumed stream completes", async () => {
+    const { subscriber, publisher } = createInMemoryPubSubForTesting();
+    const unsubscribeSpy = vi.spyOn(subscriber, "unsubscribe");
+
+    const waitUntilPromises: Promise<unknown>[] = [];
+    const resume = createResumableStreamContext({
+      waitUntil: (p) => { waitUntilPromises.push(p); },
+      subscriber, publisher,
+      keyPrefix: "test-unsub-done-" + crypto.randomUUID(),
+    });
+
+    // Create a producer stream
+    const { readable, writer } = createTestingStream();
+    const producerStream = await resume.createNewResumableStream("ud-stream", () => readable);
+
+    // Write data
+    writer.write("data");
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Resume the stream
+    const consumerStream = await resume.resumeExistingStream("ud-stream");
+    expect(consumerStream).not.toBeNull();
+    expect(consumerStream).not.toBeUndefined();
+
+    // Close the producer — this should send DONE to the consumer
+    writer.close();
+
+    // Consume both streams to completion
+    await streamToBuffer(consumerStream);
+    await streamToBuffer(producerStream);
+    await Promise.all(waitUntilPromises);
+
+    // Verify the chunk channel was unsubscribed
+    const chunkUnsubscribes = unsubscribeSpy.mock.calls.filter(
+      ([channel]) => typeof channel === "string" && channel.includes(":chunk:")
+    );
+    expect(chunkUnsubscribes.length).toBeGreaterThanOrEqual(1);
+  }, 10_000);
+});
