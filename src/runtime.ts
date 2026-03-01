@@ -202,12 +202,10 @@ async function createNewResumableStream(
     }
   );
 
-  // Hoist stream + reader so cancel() can access them
-  const stream = makeStream();
-  const reader = stream.getReader();
-
   return new ReadableStream<string>({
     start(controller) {
+      const stream = makeStream();
+      const reader = stream.getReader();
       function read() {
         reader
           .read()
@@ -250,11 +248,6 @@ async function createNewResumableStream(
           });
       }
       read();
-    },
-    cancel() {
-      // Client disconnect → cancel source reader and clean up
-      reader.cancel().catch(() => {});
-      return performCleanup();
     },
   });
 }

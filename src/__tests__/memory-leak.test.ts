@@ -256,7 +256,7 @@ describe("memory leak: error, cancel, and timeout paths", () => {
     expect(state).toBe("DONE");
   }, 10_000);
 
-  it("stream cancel triggers cleanup", async () => {
+  it("stream cancel does NOT kill the producer (resumable behavior)", async () => {
     const waitUntilPromises: Promise<unknown>[] = [];
     const { subscriber, publisher } = createInMemoryPubSubForTesting();
     const resume = createResumableStreamContext({
@@ -272,19 +272,27 @@ describe("memory leak: error, cancel, and timeout paths", () => {
     writer.write("partial data");
     await new Promise((r) => setTimeout(r, 50));
 
-    // Cancel the outer ReadableStream (simulates client disconnect)
+    // Cancel the outer ReadableStream (simulates client disconnect / page reload)
     await stream!.cancel();
 
-    // waitUntil promise should resolve (not hang forever)
+    // Producer should still be alive — sentinel should NOT be DONE
+    const stateAfterCancel = await resume.hasExistingStream("cancel-stream");
+    expect(stateAfterCancel).toBe(true);
+
+    // Producer can still receive more data and finish normally
+    writer.write(" more data");
+    writer.close();
+
+    // waitUntil promise should resolve once the source stream finishes
     const result = await Promise.race([
       Promise.all(waitUntilPromises).then(() => "resolved"),
       new Promise((r) => setTimeout(() => r("timeout"), 5000)),
     ]);
     expect(result).toBe("resolved");
 
-    // Sentinel should be DONE
-    const state = await resume.hasExistingStream("cancel-stream");
-    expect(state).toBe("DONE");
+    // NOW sentinel should be DONE
+    const stateAfterDone = await resume.hasExistingStream("cancel-stream");
+    expect(stateAfterDone).toBe("DONE");
   }, 10_000);
 
   it("resumeStream timeout always resolves", async () => {
