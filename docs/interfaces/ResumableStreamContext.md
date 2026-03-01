@@ -1,4 +1,4 @@
-[**Resumable Stream v2.2.10**](../README.md)
+[**Resumable Stream v0.1.0**](../README.md)
 
 ***
 
@@ -10,7 +10,7 @@
 
 ### createNewResumableStream()
 
-> **createNewResumableStream**: (`streamId`, `makeStream`, `skipCharacters?`) => `Promise`\<`null` \| `ReadableStream`\<`string`\>\>
+> **createNewResumableStream**: (`streamId`, `makeStream`) => `Promise`\<`null` \| `ReadableStream`\<`string`\>\>
 
 Creates a new resumable stream.
 
@@ -27,12 +27,6 @@ The ID of the stream. Must be unique for each stream.
 () => `ReadableStream`\<`string`\>
 
 A function that returns a stream of strings. It's only executed if the stream it not yet in progress.
-
-##### skipCharacters?
-
-`number`
-
-Number of characters to skip
 
 #### Returns
 

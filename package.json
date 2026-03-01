@@ -1,20 +1,33 @@
 {
-  "name": "resumable-stream",
-  "version": "2.2.10",
+  "name": "resuming-stream",
+  "version": "0.1.0",
   "description": "Library for resuming and following streams in distributed systems",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "files": [
     "dist"
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/vercel/resumable-stream"
+    "url": "https://github.com/taneron/resumable-stream"
   },
   "exports": {
-    ".": "./dist/index.js",
-    "./ioredis": "./dist/ioredis.js",
-    "./redis": "./dist/redis.js",
-    "./generic": "./dist/generic.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./ioredis": {
+      "types": "./dist/ioredis.d.ts",
+      "default": "./dist/ioredis.js"
+    },
+    "./redis": {
+      "types": "./dist/redis.d.ts",
+      "default": "./dist/redis.js"
+    },
+    "./generic": {
+      "types": "./dist/generic.d.ts",
+      "default": "./dist/generic.js"
+    }
   },
   "typesVersions": {
     "*": {
@@ -32,9 +45,11 @@
   "scripts": {
     "test": "DEBUG=1 vitest",
     "test:watch": "vitest watch",
-    "clean": "rimraf dist",
+    "clean": "rimraf dist *.tsbuildinfo",
     "build": "tsc -p tsconfig.build.json && pnpm run docs",
-    "prepublishOnly": "pnpm build && test -d dist && test -n \"$(ls -A dist)\" || (echo 'ERROR: dist/ is empty or does not exist' && exit 1)",
+    "prepublishOnly": "pnpm run clean && pnpm run build",
+    "release": "pnpm run clean && pnpm run build && npm publish --access public",
+    "release:dry": "pnpm run clean && pnpm run build && npm pack --dry-run",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "docs": "rimraf docs && pnpm typedoc"
   },
@@ -54,8 +69,16 @@
     "typescript": "^5.9.3",
     "vitest": "^3.1.1"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "stream",
+    "resumable",
+    "sse",
+    "server-sent-events",
+    "redis",
+    "pubsub",
+    "serverless"
+  ],
+  "author": "taneron",
   "license": "ISC",
   "packageManager": "pnpm@8.15.7+sha512.c85cd21b6da10332156b1ca2aa79c0a61ee7ad2eb0453b88ab299289e9e8ca93e6091232b25c07cbf61f6df77128d9c849e5c9ac6e44854dbd211c49f3a67adc"
 }
