@@ -133,13 +133,47 @@ async function createNewResumableStream(
   await initPromise;
   const chunks: string[] = [];
   let listenerChannels: string[] = [];
-  let streamDoneResolver: () => void;
+  let streamDoneResolver: (() => void) | undefined;
   ctx.waitUntil(
     new Promise<void>((resolve) => {
       streamDoneResolver = resolve;
     })
   );
   let isDone = false;
+  let cleanedUp = false;
+
+  async function performCleanup() {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    isDone = true;
+    const promises: Promise<unknown>[] = [];
+    debugLog("setting sentinel to done");
+    promises.push(
+      ctx.publisher
+        .set(`${ctx.keyPrefix}:sentinel:${streamId}`, DONE_VALUE, {
+          EX: 24 * 60 * 60,
+        })
+        .catch(() => {})
+    );
+    promises.push(
+      ctx.subscriber.unsubscribe(`${ctx.keyPrefix}:request:${streamId}`).catch(() => {})
+    );
+    for (const listenerId of listenerChannels) {
+      debugLog("sending done message to", listenerId);
+      promises.push(
+        ctx.publisher
+          .publish(`${ctx.keyPrefix}:chunk:${listenerId}`, DONE_MESSAGE)
+          .catch(() => {})
+      );
+    }
+    await Promise.all(promises);
+    chunks.length = 0;
+    listenerChannels.length = 0;
+    streamDoneResolver?.();
+    streamDoneResolver = undefined;
+    debugLog("Cleanup done");
+  }
+
   // This is ultimately racy if two requests for the same ID come at the same time.
   // But this library is for the case where that would not happen.
   await ctx.subscriber.subscribe(
@@ -164,56 +198,59 @@ async function createNewResumableStream(
     }
   );
 
+  // Hoist stream + reader so cancel() can access them
+  const stream = makeStream();
+  const reader = stream.getReader();
+
   return new ReadableStream<string>({
     start(controller) {
-      const stream = makeStream();
-      const reader = stream.getReader();
       function read() {
-        reader.read().then(async ({ done, value }) => {
-          if (done) {
-            isDone = true;
-            debugLog("Stream done");
+        reader
+          .read()
+          .then(async ({ done, value }) => {
+            if (done) {
+              debugLog("Stream done");
+              try {
+                controller.close();
+              } catch (e) {
+                //console.error(e);
+              }
+              await performCleanup();
+              return;
+            }
+            chunks.push(value);
             try {
-              controller.close();
+              debugLog("Enqueuing line", value);
+              controller.enqueue(value);
             } catch (e) {
-              //console.error(e);
+              // If we cannot enqueue, the stream is already closed, but we WANT to continue.
             }
             const promises: Promise<unknown>[] = [];
-            debugLog("setting sentinel to done");
-            promises.push(
-              ctx.publisher.set(`${ctx.keyPrefix}:sentinel:${streamId}`, DONE_VALUE, {
-                EX: 24 * 60 * 60,
-              })
-            );
-            promises.push(ctx.subscriber.unsubscribe(`${ctx.keyPrefix}:request:${streamId}`));
             for (const listenerId of listenerChannels) {
-              debugLog("sending done message to", listenerId);
+              debugLog("sending line to", listenerId);
               promises.push(
-                ctx.publisher.publish(`${ctx.keyPrefix}:chunk:${listenerId}`, DONE_MESSAGE)
+                ctx.publisher.publish(`${ctx.keyPrefix}:chunk:${listenerId}`, value)
               );
             }
             await Promise.all(promises);
-            streamDoneResolver?.();
-            debugLog("Cleanup done");
-            return;
-          }
-          chunks.push(value);
-          try {
-            debugLog("Enqueuing line", value);
-            controller.enqueue(value);
-          } catch (e) {
-            // If we cannot enqueue, the stream is already closed, but we WANT to continue.
-          }
-          const promises: Promise<unknown>[] = [];
-          for (const listenerId of listenerChannels) {
-            debugLog("sending line to", listenerId);
-            promises.push(ctx.publisher.publish(`${ctx.keyPrefix}:chunk:${listenerId}`, value));
-          }
-          await Promise.all(promises);
-          read();
-        });
+            read();
+          })
+          .catch(async () => {
+            // Source stream error → close outer stream and clean up
+            try {
+              controller.close();
+            } catch (e) {
+              // stream may already be closed
+            }
+            await performCleanup();
+          });
       }
       read();
+    },
+    cancel() {
+      // Client disconnect → cancel source reader and clean up
+      reader.cancel().catch(() => {});
+      return performCleanup();
     },
   });
 }
@@ -261,16 +298,19 @@ export async function resumeStream(
           const cleanup = async () => {
             await ctx.subscriber.unsubscribe(`${ctx.keyPrefix}:chunk:${listenerId}`);
           };
-          const start = Date.now();
           const timeout = setTimeout(async () => {
             await cleanup();
             const val = await ctx.publisher.get(`${ctx.keyPrefix}:sentinel:${streamId}`);
             if (val === DONE_VALUE) {
               resolve(null);
+              return;
             }
-            if (Date.now() - start > 1000) {
+            try {
               controller.error(new Error("Timeout waiting for ack"));
+            } catch (e) {
+              // controller may already be closed
             }
+            resolve(null);
           }, 1000);
           await ctx.subscriber.subscribe(
             `${ctx.keyPrefix}:chunk:${listenerId}`,
