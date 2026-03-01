@@ -4,11 +4,14 @@ import { CreateResumableStreamContextOptions } from "./types";
 import { ResumableStreamContext } from "./types";
 import { createPublisherAdapter, createSubscriberAdapter } from "./ioredis-adapters";
 
+const DEFAULT_SENTINEL_TTL = 2 * 60 * 60; // 2 hours
+
 interface CreateResumableStreamContext {
   keyPrefix: string;
   waitUntil: (promise: Promise<unknown>) => void;
   subscriber: Subscriber;
   publisher: Publisher;
+  sentinelTTL: number;
 }
 
 export function createResumableStreamContextFactory(defaults: _Private.RedisDefaults) {
@@ -21,6 +24,7 @@ export function createResumableStreamContextFactory(defaults: _Private.RedisDefa
       waitUntil,
       subscriber: options.subscriber,
       publisher: options.publisher,
+      sentinelTTL: options.sentinelTTL ?? DEFAULT_SENTINEL_TTL,
     } as CreateResumableStreamContext;
     let initPromises: Promise<unknown>[] = [];
 
@@ -61,7 +65,7 @@ export function createResumableStreamContextFactory(defaults: _Private.RedisDefa
         const initPromise = Promise.all(initPromises);
         await initPromise;
         await ctx.publisher.set(`${ctx.keyPrefix}:sentinel:${streamId}`, "1", {
-          EX: 24 * 60 * 60,
+          EX: ctx.sentinelTTL,
         });
         return createNewResumableStream(
           initPromise,
@@ -151,7 +155,7 @@ async function createNewResumableStream(
     promises.push(
       ctx.publisher
         .set(`${ctx.keyPrefix}:sentinel:${streamId}`, DONE_VALUE, {
-          EX: 24 * 60 * 60,
+          EX: ctx.sentinelTTL,
         })
         .catch(() => {})
     );

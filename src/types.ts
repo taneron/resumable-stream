@@ -21,6 +21,11 @@ export interface CreateResumableStreamContextOptions {
    * A pubsub publisher. Designed to be compatible with clients from the `redis` package.
    */
   publisher?: Publisher | Redis;
+  /**
+   * TTL in seconds for the Redis sentinel keys that track stream state.
+   * Defaults to 7200 (2 hours). Increase for long-running streams like deep research.
+   */
+  sentinelTTL?: number;
 }
 
 export interface ResumableStreamContext {
@@ -35,7 +40,7 @@ export interface ResumableStreamContext {
    * @param streamId - The ID of the stream. Must be unique for each stream.
    * @param makeStream - A function that returns a stream of strings. It's only executed if the stream it not yet in progress.
    * @param skipCharacters - Number of characters to skip
-   * @returns A readable stream of strings. Returns null if there was a stream with the given streamId but it is already fully done (Defaults to 24 hour expiration)
+   * @returns A readable stream of strings. Returns null if there was a stream with the given streamId but it is already fully done (Defaults to 2 hour expiration, configurable via sentinelTTL)
    */
   resumableStream: (
     streamId: string,
@@ -48,7 +53,7 @@ export interface ResumableStreamContext {
    * @param streamId - The ID of the stream. Must be unique for each stream.
    * @param makeStream - A function that returns a stream of strings. It's only executed if the stream it not yet in progress.
    * @param skipCharacters - Number of characters to skip
-   * @returns A readable stream of strings. Returns null if there was a stream with the given streamId but it is already fully done (Defaults to 24 hour expiration). undefined if there is no stream with the given streamId.
+   * @returns A readable stream of strings. Returns null if there was a stream with the given streamId but it is already fully done (Defaults to 2 hour expiration, configurable via sentinelTTL). undefined if there is no stream with the given streamId.
    */
   resumeExistingStream: (
     streamId: string,
@@ -59,7 +64,7 @@ export interface ResumableStreamContext {
    *
    * @param streamId - The ID of the stream. Must be unique for each stream.
    * @param makeStream - A function that returns a stream of strings. It's only executed if the stream it not yet in progress.
-   * @returns A readable stream of strings. Returns null if there was a stream with the given streamId but it is already fully done (Defaults to 24 hour expiration)
+   * @returns A readable stream of strings. Returns null if there was a stream with the given streamId but it is already fully done (Defaults to 2 hour expiration, configurable via sentinelTTL)
    */
   createNewResumableStream: (
     streamId: string,
