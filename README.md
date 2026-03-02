@@ -2,9 +2,9 @@
 
 Library for wrapping streams of strings (like SSE web responses) so that a client can resume them after losing a connection, or a second client can follow along.
 
-Designed for use in serverless environments without sticky load balancing.
+Works in both serverless (Vercel, AWS Lambda, Cloudflare Workers) and traditional server environments (Express, Fastify, long-lived Node.js processes). Uses Redis pub/sub as a shared backplane so reconnecting clients can resume from any server instance — no sticky load balancing required.
 
-Relies on Redis pub/sub. Minimizes latency and Redis usage for the common case where stream recovery isn't needed — in that case, the library performs a single `INCR` and `SUBSCRIBE` per stream.
+Minimizes latency and Redis usage for the common case where stream recovery isn't needed — in that case, the library performs a single `INCR` and `SUBSCRIBE` per stream.
 
 ## Installation
 
@@ -34,14 +34,26 @@ npm install ioredis
 
 ## Quick start
 
+### Serverless (Next.js, Vercel)
+
 ```typescript
 import { createResumableStreamContext } from "resuming-stream";
 import { after } from "next/server";
 
-// Uses the `redis` package by default.
-// Connects via REDIS_URL or KV_URL environment variable.
+// waitUntil keeps the serverless function alive until the producer finishes
 const streamContext = createResumableStreamContext({
   waitUntil: after,
+});
+```
+
+### Traditional server (Express, Fastify, etc.)
+
+```typescript
+import { createResumableStreamContext } from "resuming-stream";
+
+// Pass null — long-lived processes don't need waitUntil
+const streamContext = createResumableStreamContext({
+  waitUntil: null,
 });
 ```
 
@@ -196,8 +208,21 @@ const streamContext = createResumableStreamContext({
 const state = await streamContext.hasExistingStream(streamId);
 // null    — no stream with this ID
 // true    — stream is active
-// "DONE"  — stream completed (expires after 24h)
+// "DONE"  — stream completed (expires after sentinelTTL, default 2h)
 ```
+
+## Memory profile
+
+Compared against the original `resumable-stream` over a 5-minute stress test on Node.js (100 concurrent streams, 1 MB chunks):
+
+| Metric | resumable-stream | resuming-stream | Difference |
+|---|---|---|---|
+| Final RSS | 585 MB | 385 MB | **-34%** |
+| RSS Growth | +196 MB | -1 MB | Original leaks ~38 MB/min, fork is flat |
+| Final Heap Used | 267 MB | 151 MB | **-43%** |
+| External Growth | +4 MB | 0 MB | Fork cleans up Buffers properly |
+
+The original grew 196 MB in ~5 minutes and never came back down. The fork returned to baseline after idle.
 
 ## Redis requirements
 
@@ -217,6 +242,22 @@ If you're using a managed Redis provider (Upstash, AWS ElastiCache, etc.), conne
 6. On completion or cancellation, both producer and consumer streams clean up their subscriptions.
 
 ## Changelog
+
+### 0.2.0
+
+**Bug fixes:**
+
+- **Producer no longer killed on client disconnect** — The `cancel()` handler on the producer-side ReadableStream was incorrectly stopping the source stream and marking the sentinel as DONE when a client disconnected. This broke the core resumable behavior. The producer now continues to completion regardless of consumer disconnects.
+
+- **Source stream errors now trigger cleanup** — Added `.catch()` on the read loop so that if the source stream (e.g. LLM provider) errors, the `waitUntil` promise resolves, the sentinel is set to DONE, and buffered chunks are freed.
+
+- **`chunks[]` and `listenerChannels[]` cleared after completion** — These arrays are now zeroed out in `performCleanup()`, preventing memory leaks when frameworks (e.g. Next.js `after()`) hold references to the stream or its promises.
+
+- **`resumeStream` timeout no longer hangs** — The timeout handler now always calls `resolve(null)`, preventing the returned promise from hanging forever when no producer responds.
+
+**Features:**
+
+- **Configurable sentinel TTL** — New `sentinelTTL` option (in seconds) controls how long Redis sentinel keys persist. Defaults to 2 hours (down from 24h). Increase for long-running streams like deep research.
 
 ### 0.1.0
 

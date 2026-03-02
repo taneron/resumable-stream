@@ -26,6 +26,18 @@ export interface CreateResumableStreamContextOptions {
    * Defaults to 7200 (2 hours). Increase for long-running streams like deep research.
    */
   sentinelTTL?: number;
+  /**
+   * Maximum number of concurrent resume listener channels per stream.
+   * Oldest listeners are evicted when this limit is reached.
+   * Defaults to 5.
+   */
+  maxListeners?: number;
+  /**
+   * Maximum size in bytes of accumulated stream data eligible for resume replay.
+   * When exceeded, new resume consumers receive a DONE signal and must re-fetch from the database.
+   * Defaults to 2 MB (2 * 1024 * 1024).
+   */
+  maxResumableSize?: number;
 }
 
 export interface ResumableStreamContext {

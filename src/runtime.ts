@@ -12,6 +12,8 @@ interface CreateResumableStreamContext {
   subscriber: Subscriber;
   publisher: Publisher;
   sentinelTTL: number;
+  maxListeners: number;
+  maxResumableSize: number;
 }
 
 export function createResumableStreamContextFactory(defaults: _Private.RedisDefaults) {
@@ -25,6 +27,8 @@ export function createResumableStreamContextFactory(defaults: _Private.RedisDefa
       subscriber: options.subscriber,
       publisher: options.publisher,
       sentinelTTL: options.sentinelTTL ?? DEFAULT_SENTINEL_TTL,
+      maxListeners: options.maxListeners ?? DEFAULT_MAX_LISTENERS,
+      maxResumableSize: options.maxResumableSize ?? DEFAULT_MAX_RESUMABLE_SIZE,
     } as CreateResumableStreamContext;
     let initPromises: Promise<unknown>[] = [];
 
@@ -111,6 +115,9 @@ const DONE_MESSAGE = "\n\n\nDONE_SENTINEL_hasdfasudfyge374%$%^$EDSATRTYFtydryrte
 
 const DONE_VALUE = "DONE";
 
+const DEFAULT_MAX_LISTENERS = 5;
+const DEFAULT_MAX_RESUMABLE_SIZE = 2 * 1024 * 1024; // 2 MB
+
 async function resumeExistingStream(
   initPromise: Promise<unknown>,
   ctx: CreateResumableStreamContext,
@@ -135,7 +142,7 @@ async function createNewResumableStream(
   makeStream: () => ReadableStream<string>
 ): Promise<ReadableStream<string> | null> {
   await initPromise;
-  const chunks: string[] = [];
+  let joinedCache = "";
   let listenerChannels: string[] = [];
   let streamDoneResolver: (() => void) | undefined;
   ctx.waitUntil(
@@ -171,7 +178,7 @@ async function createNewResumableStream(
       );
     }
     await Promise.all(promises);
-    chunks.length = 0;
+    joinedCache = "";
     listenerChannels.length = 0;
     streamDoneResolver?.();
     streamDoneResolver = undefined;
@@ -185,13 +192,25 @@ async function createNewResumableStream(
     async (message: string) => {
       const parsedMessage = JSON.parse(message) as ResumeStreamMessage;
       debugLog("Connected to listener", parsedMessage.listenerId);
-      // Note: listener IDs accumulate here even after the consumer disconnects.
-      // This is intentional — removing them would add complexity to the hot path,
-      // and publishing to a dead channel is harmless (no subscribers = no-op).
-      // The array is cleared in performCleanup when the producer stream ends.
+
+      // Cap listener channels to prevent unbounded growth from dead consumers
+      if (listenerChannels.length >= ctx.maxListeners) {
+        listenerChannels.splice(0, listenerChannels.length - ctx.maxListeners + 1);
+      }
       listenerChannels.push(parsedMessage.listenerId);
-      debugLog("parsedMessage", chunks.length, parsedMessage.skipCharacters);
-      const chunksToSend = chunks.join("").slice(parsedMessage.skipCharacters || 0);
+
+      // If accumulated data is too large, don't replay — client should re-fetch from DB
+      if (joinedCache.length > ctx.maxResumableSize) {
+        debugLog("Stream exceeds maxResumableSize (" + ctx.maxResumableSize + " bytes), sending DONE");
+        await ctx.publisher.publish(
+          `${ctx.keyPrefix}:chunk:${parsedMessage.listenerId}`,
+          DONE_MESSAGE
+        );
+        return;
+      }
+
+      debugLog("parsedMessage", joinedCache.length, parsedMessage.skipCharacters);
+      const chunksToSend = joinedCache.slice(parsedMessage.skipCharacters || 0);
       debugLog("sending chunks", chunksToSend.length);
       const promises: Promise<unknown>[] = [];
       promises.push(
@@ -224,7 +243,9 @@ async function createNewResumableStream(
               await performCleanup();
               return;
             }
-            chunks.push(value);
+            if (joinedCache.length <= ctx.maxResumableSize) {
+              joinedCache += value;
+            }
             try {
               debugLog("Enqueuing line", value);
               controller.enqueue(value);

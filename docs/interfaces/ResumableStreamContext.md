@@ -1,4 +1,4 @@
-[**Resumable Stream v0.1.0**](../README.md)
+[**Resumable Stream v0.3.0**](../README.md)
 
 ***
 
@@ -32,7 +32,7 @@ A function that returns a stream of strings. It's only executed if the stream it
 
 `Promise`\<`null` \| `ReadableStream`\<`string`\>\>
 
-A readable stream of strings. Returns null if there was a stream with the given streamId but it is already fully done (Defaults to 24 hour expiration)
+A readable stream of strings. Returns null if there was a stream with the given streamId but it is already fully done (Defaults to 2 hour expiration, configurable via sentinelTTL)
 
 ***
 
@@ -93,7 +93,7 @@ Number of characters to skip
 
 `Promise`\<`null` \| `ReadableStream`\<`string`\>\>
 
-A readable stream of strings. Returns null if there was a stream with the given streamId but it is already fully done (Defaults to 24 hour expiration)
+A readable stream of strings. Returns null if there was a stream with the given streamId but it is already fully done (Defaults to 2 hour expiration, configurable via sentinelTTL)
 
 ***
 
@@ -121,4 +121,4 @@ Number of characters to skip
 
 `Promise`\<`undefined` \| `null` \| `ReadableStream`\<`string`\>\>
 
-A readable stream of strings. Returns null if there was a stream with the given streamId but it is already fully done (Defaults to 24 hour expiration). undefined if there is no stream with the given streamId.
+A readable stream of strings. Returns null if there was a stream with the given streamId but it is already fully done (Defaults to 2 hour expiration, configurable via sentinelTTL). undefined if there is no stream with the given streamId.
