@@ -5,6 +5,7 @@ import { ResumableStreamContext } from "./types";
 import { createPublisherAdapter, createSubscriberAdapter } from "./ioredis-adapters";
 
 const DEFAULT_SENTINEL_TTL = 2 * 60 * 60; // 2 hours
+const DONE_SENTINEL_TTL = 5 * 60; // 5 minutes — completed streams only need brief sentinel for late resume attempts
 
 interface CreateResumableStreamContext {
   keyPrefix: string;
@@ -162,7 +163,7 @@ async function createNewResumableStream(
     promises.push(
       ctx.publisher
         .set(`${ctx.keyPrefix}:sentinel:${streamId}`, DONE_VALUE, {
-          EX: ctx.sentinelTTL,
+          EX: DONE_SENTINEL_TTL,
         })
         .catch(() => {})
     );
